@@ -1,0 +1,9 @@
+{
+  "name": "codex-app-mac-intel-builder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal helper to rebuild Codex.dmg for Intel Macs",
+  "scripts": {
+    "build": "bash ./build-intel.sh"
+  }
+}
