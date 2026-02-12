@@ -1,4 +1,4 @@
-# Codex App Mac Intel Builder
+# Codex App for Mac Intel (Unofficial)
 
 Minimal helper repo to rebuild the official `Codex.dmg` into an Intel-compatible macOS app image.
 
