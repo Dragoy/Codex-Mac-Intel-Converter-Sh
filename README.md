@@ -19,7 +19,7 @@ This is an unofficial adaptation approach, similar in spirit to the Linux commun
 
 ## Quick usage
 
-1. Put your original `Codex.dmg` next to the script (or pass the path explicitly).
+1. Put your original `Codex.dmg` next to the repo folder (not inside it), so it is available as `../Codex.dmg`.
 2. Run:
 
 ```bash

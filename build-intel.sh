@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve script and workspace paths.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PARENT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TMP_BASE="${SCRIPT_DIR}/.tmp"
 LOG_FILE="${SCRIPT_DIR}/log.txt"
 OUTPUT_DMG="${SCRIPT_DIR}/CodexAppMacIntel.dmg"
@@ -9,6 +11,7 @@ RUN_ID="$(date +%Y%m%d_%H%M%S)"
 WORK_DIR="${TMP_BASE}/codex_intel_build_${RUN_ID}"
 MOUNT_POINT="${WORK_DIR}/mount"
 
+# Runtime flags/state used by cleanup and mount logic.
 ATTACHED_BY_SCRIPT=0
 SOURCE_APP=""
 
@@ -31,7 +34,7 @@ Usage:
   ./build-intel.sh [path/to/Codex.dmg]
 
 Behavior:
-  - Reads source DMG from current directory (or explicit path argument)
+  - Reads source DMG from ../Codex.dmg by default (or explicit path argument)
   - Never modifies the original DMG
   - Uses .tmp/* for all build steps
   - Writes full logs to log.txt
@@ -42,6 +45,7 @@ EOF
 cleanup() {
   local exit_code=$?
 
+  # Detach only if this script mounted the DMG itself.
   if [[ "${ATTACHED_BY_SCRIPT}" -eq 1 && -d "${MOUNT_POINT}" ]]; then
     hdiutil detach "${MOUNT_POINT}" >/dev/null 2>&1 || hdiutil detach -force "${MOUNT_POINT}" >/dev/null 2>&1 || true
   fi
@@ -53,15 +57,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Prepare log file and mirror output to console + log.txt.
 mkdir -p "${TMP_BASE}"
 : > "${LOG_FILE}"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
 log "Starting Intel build pipeline"
 log "Script dir: ${SCRIPT_DIR}"
+log "Default source location: ${SCRIPT_PARENT_DIR}/Codex.dmg"
 log "Work dir: ${WORK_DIR}"
 mkdir -p "${WORK_DIR}"
 
+# Validate required tools early.
 for cmd in hdiutil ditto npm npx node file codesign xattr; do
   command -v "${cmd}" >/dev/null 2>&1 || die "Missing required command: ${cmd}"
 done
@@ -76,15 +83,19 @@ if [[ $# -gt 1 ]]; then
   die "Too many arguments"
 fi
 
+# Resolve source DMG path:
+# 1) explicit argument
+# 2) ../Codex.dmg
+# 3) single *.dmg in parent directory (if present)
 if [[ $# -eq 1 ]]; then
   INPUT_DMG="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 else
-  if [[ -f "${SCRIPT_DIR}/Codex.dmg" ]]; then
-    INPUT_DMG="${SCRIPT_DIR}/Codex.dmg"
+  if [[ -f "${SCRIPT_PARENT_DIR}/Codex.dmg" ]]; then
+    INPUT_DMG="${SCRIPT_PARENT_DIR}/Codex.dmg"
   else
-    mapfile -t found_dmgs < <(find "${SCRIPT_DIR}" -maxdepth 1 -type f -name "*.dmg" ! -name "$(basename "${OUTPUT_DMG}")" | sort)
+    mapfile -t found_dmgs < <(find "${SCRIPT_PARENT_DIR}" -maxdepth 1 -type f -name "*.dmg" ! -name "$(basename "${OUTPUT_DMG}")" | sort)
     if [[ ${#found_dmgs[@]} -eq 0 ]]; then
-      die "No source DMG found. Put Codex.dmg next to this script or pass a path."
+      die "No source DMG found. Put Codex.dmg next to this repo folder (../Codex.dmg) or pass a path."
     fi
     if [[ ${#found_dmgs[@]} -gt 1 ]]; then
       printf '%s\n' "${found_dmgs[@]}"
@@ -97,6 +108,7 @@ fi
 [[ -f "${INPUT_DMG}" ]] || die "Source DMG not found: ${INPUT_DMG}"
 log "Source DMG: ${INPUT_DMG}"
 
+# Mount source DMG in read-only mode.
 log "Mounting source DMG in read-only mode"
 mkdir -p "${MOUNT_POINT}"
 if hdiutil attach -readonly -nobrowse -mountpoint "${MOUNT_POINT}" "${INPUT_DMG}" >/dev/null; then
@@ -117,6 +129,7 @@ TARGET_APP="${WORK_DIR}/Codex.app"
 BUILD_PROJECT="${WORK_DIR}/build-project"
 DMG_ROOT="${WORK_DIR}/dmg-root"
 
+# Copy app bundle from mounted DMG to local writable work dir.
 log "Copying source app bundle to work dir"
 ditto "${SOURCE_APP}" "${ORIG_APP}"
 
@@ -128,6 +141,7 @@ ELECTRON_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "${FRAME
 ASAR_FILE="${ORIG_APP}/Contents/Resources/app.asar"
 [[ -f "${ASAR_FILE}" ]] || die "app.asar not found in source app"
 
+# Read dependency versions from app.asar metadata.
 ASAR_META_DIR="${WORK_DIR}/asar-meta"
 mkdir -p "${ASAR_META_DIR}"
 (
@@ -149,6 +163,7 @@ log "Detected Electron version: ${ELECTRON_VERSION}"
 log "Detected better-sqlite3 version: ${BS_VERSION}"
 log "Detected node-pty version: ${NP_VERSION}"
 
+# Build a temporary project to fetch x64 Electron/runtime artifacts.
 log "Preparing x64 build project"
 mkdir -p "${BUILD_PROJECT}"
 cat > "${BUILD_PROJECT}/package.json" <<EOF
@@ -173,9 +188,11 @@ EOF
   npm install --no-audit --no-fund
 )
 
+# Use Electron x64 app template as the destination runtime.
 log "Creating Intel app bundle from Electron runtime"
 ditto "${BUILD_PROJECT}/node_modules/electron/dist/Electron.app" "${TARGET_APP}"
 
+# Inject original Codex app resources into the x64 runtime shell.
 log "Injecting Codex resources from original app"
 rm -rf "${TARGET_APP}/Contents/Resources"
 ditto "${ORIG_APP}/Contents/Resources" "${TARGET_APP}/Contents/Resources"
@@ -186,6 +203,7 @@ cp "${ORIG_APP}/Contents/Info.plist" "${TARGET_APP}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSEnvironment:ELECTRON_RENDERER_URL string app://-/index.html" "${TARGET_APP}/Contents/Info.plist" >/dev/null 2>&1 || \
   /usr/libexec/PlistBuddy -c "Set :LSEnvironment:ELECTRON_RENDERER_URL app://-/index.html" "${TARGET_APP}/Contents/Info.plist" >/dev/null
 
+# Rebuild native modules against Electron x64 ABI.
 log "Rebuilding native modules for Electron ${ELECTRON_VERSION} x64"
 (
   cd "${BUILD_PROJECT}"
@@ -195,6 +213,7 @@ log "Rebuilding native modules for Electron ${ELECTRON_VERSION} x64"
 TARGET_UNPACKED="${TARGET_APP}/Contents/Resources/app.asar.unpacked"
 [[ -d "${TARGET_UNPACKED}" ]] || die "Target app.asar.unpacked not found"
 
+# Replace arm64 native artifacts with rebuilt x64 binaries.
 log "Replacing native binaries inside app.asar.unpacked"
 install -m 755 "${BUILD_PROJECT}/node_modules/better-sqlite3/build/Release/better_sqlite3.node" \
   "${TARGET_UNPACKED}/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
@@ -219,15 +238,18 @@ RG_X64_BIN="${CLI_X64_ROOT}/path/rg"
 [[ -f "${CLI_X64_BIN}" ]] || die "x64 Codex CLI binary not found after npm install"
 [[ -f "${RG_X64_BIN}" ]] || die "x64 rg binary not found after npm install"
 
+# Replace bundled arm64 codex/rg command-line binaries.
 log "Replacing bundled codex/rg binaries with x64 versions"
 install -m 755 "${CLI_X64_BIN}" "${TARGET_APP}/Contents/Resources/codex"
 install -m 755 "${CLI_X64_BIN}" "${TARGET_APP}/Contents/Resources/app.asar.unpacked/codex"
 install -m 755 "${RG_X64_BIN}" "${TARGET_APP}/Contents/Resources/rg"
 
+# Sparkle native addon is arm64-only in this flow; disable it.
 log "Disabling incompatible Sparkle native addon"
 rm -f "${TARGET_APP}/Contents/Resources/native/sparkle.node"
 rm -f "${TARGET_APP}/Contents/Resources/app.asar.unpacked/native/sparkle.node"
 
+# Sanity-check key binaries before signing/packaging.
 log "Validating key binaries are x86_64"
 for binary in \
   "${TARGET_APP}/Contents/MacOS/Electron" \
@@ -240,11 +262,13 @@ for binary in \
   [[ "${file_output}" == *"x86_64"* ]] || die "Expected x86_64 binary: ${binary}"
 done
 
+# Re-sign modified app ad-hoc to satisfy macOS code integrity checks.
 log "Signing app ad-hoc"
 xattr -cr "${TARGET_APP}" || true
 codesign --force --deep --sign - --timestamp=none "${TARGET_APP}"
 codesign --verify --deep --strict "${TARGET_APP}"
 
+# Build final distributable DMG.
 log "Building output DMG: ${OUTPUT_DMG}"
 rm -f "${OUTPUT_DMG}"
 mkdir -p "${DMG_ROOT}"
