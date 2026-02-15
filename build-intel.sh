@@ -186,6 +186,8 @@ EOF
 (
   cd "${BUILD_PROJECT}"
   npm install --no-audit --no-fund
+  # Explicitly install x64 binary for Intel build
+  npm install --no-audit --no-fund @openai/codex-darwin-x64@latest --force
 )
 
 # Use Electron x64 app template as the destination runtime.

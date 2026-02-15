@@ -34,16 +34,6 @@ jobs:
         chmod +x ./build-intel.sh
         ./build-intel.sh ../Codex.dmg
         
-    - name: Debug - Find codex binaries on failure
-      if: failure()
-      run: |
-        echo "=== Searching for codex binaries ==="
-        find . -name "codex" -type f 2>/dev/null | head -20 || true
-        echo "=== @openai directory structure ==="
-        find . -path "*/@openai/*" -type d 2>/dev/null | head -20 || true
-        echo "=== node_modules structure ==="
-        ls -la .tmp/*/build-project/node_modules/@openai/ 2>/dev/null || true
-        
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
