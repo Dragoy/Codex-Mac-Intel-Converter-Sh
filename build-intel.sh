@@ -186,8 +186,10 @@ EOF
 (
   cd "${BUILD_PROJECT}"
   npm install --no-audit --no-fund
-  # Explicitly install x64 binary for Intel build
-  npm install --no-audit --no-fund @openai/codex-darwin-x64@latest --force
+  # Debug: check what codex packages are installed
+  log "Checking @openai packages structure"
+  find node_modules/@openai -type f -name "codex" 2>/dev/null || true
+  ls -la node_modules/@openai/ 2>/dev/null || true
 )
 
 # Use Electron x64 app template as the destination runtime.
