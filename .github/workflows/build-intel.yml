@@ -1,0 +1,50 @@
+name: Build Intel Codex
+
+on:
+  workflow_dispatch:
+    inputs:
+      codex_url:
+        description: 'URL to download Codex.dmg (optional)'
+        required: false
+        default: 'https://persistent.oaistatic.com/codex-app-prod/Codex.dmg'
+        type: string
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        
+    - name: Download Codex.dmg
+      run: |
+        echo "Downloading Codex.dmg from ${{ github.event.inputs.codex_url }}"
+        curl -L -o ../Codex.dmg "${{ github.event.inputs.codex_url }}"
+        ls -lh ../Codex.dmg
+        file ../Codex.dmg
+        
+    - name: Run build script
+      run: |
+        chmod +x ./build-intel.sh
+        ./build-intel.sh ../Codex.dmg
+        
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: CodexAppMacIntel
+        path: CodexAppMacIntel.dmg
+        retention-days: 7
+        
+    - name: Upload build logs
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: build-logs
+        path: log.txt
+        retention-days: 7
