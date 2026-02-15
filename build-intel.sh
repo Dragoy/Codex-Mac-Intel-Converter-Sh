@@ -185,11 +185,10 @@ EOF
 
 (
   cd "${BUILD_PROJECT}"
+  # Force x64 architecture for Electron and other native dependencies
+  export npm_config_arch=x64
+  export npm_config_target_arch=x64
   npm install --no-audit --no-fund
-  # Debug: check what codex packages are installed
-  log "Checking @openai packages structure"
-  find node_modules/@openai -type f -name "codex" 2>/dev/null || true
-  ls -la node_modules/@openai/ 2>/dev/null || true
 )
 
 # Use Electron x64 app template as the destination runtime.
