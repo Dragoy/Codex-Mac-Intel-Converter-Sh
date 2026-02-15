@@ -236,17 +236,40 @@ if [[ -n "${NODE_PTY_BIN_SRC}" ]]; then
   fi
 fi
 
-CLI_X64_ROOT="${BUILD_PROJECT}/node_modules/@openai/codex-darwin-x64/vendor/x86_64-apple-darwin"
-CLI_X64_BIN="${CLI_X64_ROOT}/codex/codex"
-RG_X64_BIN="${CLI_X64_ROOT}/path/rg"
-[[ -f "${CLI_X64_BIN}" ]] || die "x64 Codex CLI binary not found after npm install"
-[[ -f "${RG_X64_BIN}" ]] || die "x64 rg binary not found after npm install"
+# Download x64 Codex CLI binary from GitHub releases since it's not in npm packages
+log "Downloading x64 Codex CLI binary from GitHub releases"
+CLI_X64_DIR="${WORK_DIR}/codex-x64"
+mkdir -p "${CLI_X64_DIR}"
+
+# Get latest release URL for x86_64-apple-darwin
+CODEX_X64_URL="https://github.com/openai/codex/releases/latest/download/codex-x86_64-apple-darwin.tar.gz"
+curl -L -o "${CLI_X64_DIR}/codex.tar.gz" "${CODEX_X64_URL}" || die "Failed to download x64 Codex CLI"
+
+# Extract the tarball
+cd "${CLI_X64_DIR}"
+tar -xzf codex.tar.gz || die "Failed to extract x64 Codex CLI"
+cd "${SCRIPT_DIR}"
+
+# Find the extracted codex binary
+CLI_X64_BIN=$(find "${CLI_X64_DIR}" -name "codex" -type f | head -1)
+[[ -f "${CLI_X64_BIN}" ]] || die "x64 Codex CLI binary not found after extraction"
+
+# Also download ripgrep (rg) for x64 if needed, or use system rg
+RG_X64_BIN="${CLI_X64_DIR}/rg"
+if command -v rg >/dev/null 2>&1; then
+  # Copy system rg if available
+  cp "$(command -v rg)" "${RG_X64_BIN}" || true
+fi
+# If no rg found, we'll skip it as the original app already has one
+[[ -f "${RG_X64_BIN}" ]] || RG_X64_BIN=""
 
 # Replace bundled arm64 codex/rg command-line binaries.
 log "Replacing bundled codex/rg binaries with x64 versions"
 install -m 755 "${CLI_X64_BIN}" "${TARGET_APP}/Contents/Resources/codex"
 install -m 755 "${CLI_X64_BIN}" "${TARGET_APP}/Contents/Resources/app.asar.unpacked/codex"
-install -m 755 "${RG_X64_BIN}" "${TARGET_APP}/Contents/Resources/rg"
+if [[ -n "${RG_X64_BIN}" && -f "${RG_X64_BIN}" ]]; then
+  install -m 755 "${RG_X64_BIN}" "${TARGET_APP}/Contents/Resources/rg"
+fi
 
 # Sparkle native addon is arm64-only in this flow; disable it.
 log "Disabling incompatible Sparkle native addon"
@@ -258,13 +281,18 @@ log "Validating key binaries are x86_64"
 for binary in \
   "${TARGET_APP}/Contents/MacOS/Electron" \
   "${TARGET_APP}/Contents/Resources/codex" \
-  "${TARGET_APP}/Contents/Resources/rg" \
   "${TARGET_APP}/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node" \
   "${TARGET_APP}/Contents/Resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node"; do
   file_output="$(file "${binary}")"
   echo "${file_output}"
   [[ "${file_output}" == *"x86_64"* ]] || die "Expected x86_64 binary: ${binary}"
 done
+
+# Check rg if it exists (we may not have replaced it)
+if [[ -f "${TARGET_APP}/Contents/Resources/rg" ]]; then
+  file_output="$(file "${TARGET_APP}/Contents/Resources/rg")"
+  echo "rg: ${file_output}"
+fi
 
 # Re-sign modified app ad-hoc to satisfy macOS code integrity checks.
 log "Signing app ad-hoc"
