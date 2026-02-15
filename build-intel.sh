@@ -254,10 +254,14 @@ cd "${SCRIPT_DIR}"
 log "Contents of ${CLI_X64_DIR}:"
 ls -laR "${CLI_X64_DIR}" || true
 
-# Find the extracted codex binary
-CLI_X64_BIN=$(find "${CLI_X64_DIR}" -name "codex" -type f | head -1)
+# Find the extracted codex binary (filename is codex-x86_64-apple-darwin)
+CLI_X64_BIN=$(find "${CLI_X64_DIR}" -name "codex*" -type f ! -name "*.tar.gz" | head -1)
 log "Found codex binary at: ${CLI_X64_BIN}"
 [[ -f "${CLI_X64_BIN}" ]] || die "x64 Codex CLI binary not found after extraction"
+
+# Rename to just 'codex' for consistency
+mv "${CLI_X64_BIN}" "${CLI_X64_DIR}/codex"
+CLI_X64_BIN="${CLI_X64_DIR}/codex"
 
 # Also download ripgrep (rg) for x64 if needed, or use system rg
 RG_X64_BIN="${CLI_X64_DIR}/rg"
