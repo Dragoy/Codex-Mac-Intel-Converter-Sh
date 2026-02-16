@@ -249,10 +249,6 @@ cd "${CLI_X64_DIR}"
 tar -xzf codex.tar.gz || die "Failed to extract x64 Codex CLI"
 cd "${SCRIPT_DIR}"
 
-# Debug: list contents of extracted directory
-log "Contents of ${CLI_X64_DIR}:"
-ls -laR "${CLI_X64_DIR}" || true
-
 # Find the extracted codex binary (filename is codex-x86_64-apple-darwin)
 CLI_X64_BIN=$(find "${CLI_X64_DIR}" -name "codex*" -type f ! -name "*.tar.gz" | head -1)
 log "Found codex binary at: ${CLI_X64_BIN}"
