@@ -56,6 +56,8 @@ jobs:
         
     - name: Extract Codex version and check release
       id: version
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         # Mount DMG and extract version
         MOUNT_POINT="/tmp/codex_mount_$$"
