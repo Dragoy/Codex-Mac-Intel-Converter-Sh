@@ -1,4 +1,4 @@
-name: Build Intel Codex
+name: Build and Release Intel Codex
 
 on:
   workflow_dispatch:
@@ -8,11 +8,18 @@ on:
         required: false
         default: 'https://persistent.oaistatic.com/codex-app-prod/Codex.dmg'
         type: string
+      release_tag:
+        description: 'Release tag (optional, auto-detected from Codex version if empty)'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build:
     runs-on: macos-latest
-    
+    permissions:
+      contents: write
+      
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -28,6 +35,32 @@ jobs:
         curl -L -o ../Codex.dmg "${{ github.event.inputs.codex_url }}"
         ls -lh ../Codex.dmg
         file ../Codex.dmg
+        
+    - name: Extract Codex version
+      id: version
+      run: |
+        # Mount DMG and extract version
+        MOUNT_POINT="/tmp/codex_mount_$$"
+        mkdir -p "$MOUNT_POINT"
+        hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" ../Codex.dmg
+        
+        # Extract version from Info.plist
+        VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$MOUNT_POINT/Codex.app/Contents/Info.plist" 2>/dev/null || echo "")
+        BUILD_NUM=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$MOUNT_POINT/Codex.app/Contents/Info.plist" 2>/dev/null || echo "")
+        
+        hdiutil detach "$MOUNT_POINT" || true
+        
+        if [[ -n "$VERSION" ]]; then
+          FULL_VERSION="${VERSION}"
+          [[ -n "$BUILD_NUM" ]] && FULL_VERSION="${VERSION} (${BUILD_NUM})"
+          echo "version=${FULL_VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "Detected Codex version: ${FULL_VERSION}"
+        else
+          echo "version=unknown" >> $GITHUB_OUTPUT
+          echo "tag=v$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "Warning: Could not detect version"
+        fi
         
     - name: Run build script
       run: |
@@ -48,3 +81,34 @@ jobs:
         name: build-logs
         path: log.txt
         retention-days: 7
+        
+    - name: Create GitHub Release
+      if: success()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TAG="${{ github.event.inputs.release_tag }}"
+        [[ -z "$TAG" ]] && TAG="${{ steps.version.outputs.tag }}"
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        # Check if release already exists
+        if gh release view "$TAG" &>/dev/null; then
+          echo "Release $TAG already exists, uploading asset..."
+        else
+          echo "Creating release $TAG..."
+          gh release create "$TAG" \
+            --title "Codex Intel ${VERSION}" \
+            --notes "Intel Mac build of Codex version ${VERSION}
+
+        Built from official Codex.dmg
+        - Architecture: x86_64 (Intel)
+        - Generated automatically via GitHub Actions" \
+            --draft=false \
+            --prerelease=false
+        fi
+        
+        # Upload the DMG to the release
+        gh release upload "$TAG" CodexAppMacIntel.dmg --clobber
+        
+        echo "Release created/updated: $TAG"
+        echo "Download URL: https://github.com/${{ github.repository }}/releases/download/${TAG}/CodexAppMacIntel.dmg"
