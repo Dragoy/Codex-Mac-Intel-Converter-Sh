@@ -258,14 +258,32 @@ log "Found codex binary at: ${CLI_X64_BIN}"
 mv "${CLI_X64_BIN}" "${CLI_X64_DIR}/codex"
 CLI_X64_BIN="${CLI_X64_DIR}/codex"
 
-# Also download ripgrep (rg) for x64 if needed, or use system rg
+# Download x86_64 ripgrep (rg) from GitHub releases
+# Note: Cannot use system rg as it may be arm64 on Apple Silicon runners
 RG_X64_BIN="${CLI_X64_DIR}/rg"
-if command -v rg >/dev/null 2>&1; then
-  # Copy system rg if available
-  cp "$(command -v rg)" "${RG_X64_BIN}" || true
+log "Downloading x86_64 ripgrep from GitHub releases"
+RG_URL="https://github.com/BurntSushi/ripgrep/releases/latest/download/ripgrep-x86_64-apple-darwin.tar.gz"
+if curl -L -o "${CLI_X64_DIR}/rg.tar.gz" "${RG_URL}" 2>/dev/null; then
+  cd "${CLI_X64_DIR}"
+  if tar -xzf rg.tar.gz 2>/dev/null; then
+    # Find the rg binary in extracted archive
+    RG_FOUND=$(find "${CLI_X64_DIR}" -name "rg" -type f | head -1)
+    if [[ -n "${RG_FOUND}" && -f "${RG_FOUND}" ]]; then
+      mv "${RG_FOUND}" "${RG_X64_BIN}"
+      log "Downloaded x86_64 rg: ${RG_X64_BIN}"
+    else
+      log "Warning: rg binary not found in archive, will skip rg replacement"
+      RG_X64_BIN=""
+    fi
+  else
+    log "Warning: Failed to extract rg archive, will skip rg replacement"
+    RG_X64_BIN=""
+  fi
+  cd "${SCRIPT_DIR}"
+else
+  log "Warning: Failed to download x86_64 rg, will skip rg replacement"
+  RG_X64_BIN=""
 fi
-# If no rg found, we'll skip it as the original app already has one
-[[ -f "${RG_X64_BIN}" ]] || RG_X64_BIN=""
 
 # Replace bundled arm64 codex/rg command-line binaries.
 log "Replacing bundled codex/rg binaries with x64 versions"
