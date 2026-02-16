@@ -1,0 +1,153 @@
+name: Build and Release Intel Codex
+
+on:
+  schedule:
+    # Daily at 9:00 AM PT (17:00 UTC in winter, 16:00 UTC in summer)
+    - cron: '0 17 * * *'
+  workflow_dispatch:
+    inputs:
+      codex_url:
+        description: 'URL to download Codex.dmg (optional)'
+        required: false
+        default: 'https://persistent.oaistatic.com/codex-app-prod/Codex.dmg'
+        type: string
+      release_tag:
+        description: 'Release tag (optional, auto-detected from Codex version if empty)'
+        required: false
+        default: ''
+        type: string
+      force_build:
+        description: 'Force build even if version already released'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  check-and-build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Determine Codex URL
+      id: url
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.codex_url }}" ]]; then
+          echo "url=${{ github.event.inputs.codex_url }}" >> $GITHUB_OUTPUT
+        else
+          echo "url=https://persistent.oaistatic.com/codex-app-prod/Codex.dmg" >> $GITHUB_OUTPUT
+        fi
+        echo "Codex URL: $(cat $GITHUB_OUTPUT | grep url | cut -d= -f2)"
+        
+    - name: Download Codex.dmg
+      run: |
+        echo "Downloading Codex.dmg from ${{ steps.url.outputs.url }}"
+        curl -L -o ../Codex.dmg "${{ steps.url.outputs.url }}"
+        ls -lh ../Codex.dmg
+        file ../Codex.dmg
+        
+    - name: Extract Codex version and check release
+      id: version
+      run: |
+        # Mount DMG and extract version
+        MOUNT_POINT="/tmp/codex_mount_$$"
+        mkdir -p "$MOUNT_POINT"
+        hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" ../Codex.dmg
+        
+        # Extract version from Info.plist
+        VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$MOUNT_POINT/Codex.app/Contents/Info.plist" 2>/dev/null || echo "")
+        BUILD_NUM=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$MOUNT_POINT/Codex.app/Contents/Info.plist" 2>/dev/null || echo "")
+        
+        hdiutil detach "$MOUNT_POINT" || true
+        
+        if [[ -n "$VERSION" ]]; then
+          FULL_VERSION="${VERSION}"
+          [[ -n "$BUILD_NUM" ]] && FULL_VERSION="${VERSION} (${BUILD_NUM})"
+          echo "version=${FULL_VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "plain_version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Detected Codex version: ${FULL_VERSION}"
+        else
+          echo "version=unknown" >> $GITHUB_OUTPUT
+          echo "tag=v$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "plain_version=unknown" >> $GITHUB_OUTPUT
+          echo "Warning: Could not detect version"
+        fi
+        
+        # Check if release already exists
+        TAG="v${VERSION}"
+        if gh release view "$TAG" &>/dev/null; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "Release $TAG already exists"
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "Release $TAG does not exist, will build"
+        fi
+    
+    - name: Skip build if version already released
+      if: steps.version.outputs.exists == 'true' && github.event.inputs.force_build != 'true'
+      run: |
+        echo "Version ${{ steps.version.outputs.version }} is already released."
+        echo "Skipping build to save resources."
+        echo "Use 'force_build' option to override."
+        exit 0
+        
+    - name: Run build script
+      if: steps.version.outputs.exists != 'true' || github.event.inputs.force_build == 'true'
+      run: |
+        chmod +x ./build-intel.sh
+        ./build-intel.sh ../Codex.dmg
+        
+    - name: Upload build artifact
+      if: steps.version.outputs.exists != 'true' || github.event.inputs.force_build == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: CodexAppMacIntel
+        path: CodexAppMacIntel.dmg
+        retention-days: 7
+        
+    - name: Upload build logs
+      if: always() && (steps.version.outputs.exists != 'true' || github.event.inputs.force_build == 'true')
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: log.txt
+        retention-days: 7
+        
+    - name: Create GitHub Release
+      if: success() && (steps.version.outputs.exists != 'true' || github.event.inputs.force_build == 'true')
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TAG="${{ github.event.inputs.release_tag }}"
+        [[ -z "$TAG" ]] && TAG="${{ steps.version.outputs.tag }}"
+        VERSION="${{ steps.version.outputs.version }}"
+        PLAIN_VERSION="${{ steps.version.outputs.plain_version }}"
+        
+        # Check if release already exists (for force_build case)
+        if gh release view "$TAG" &>/dev/null; then
+          echo "Release $TAG already exists, uploading asset..."
+        else
+          echo "Creating release $TAG..."
+          BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          NOTES=$(printf "Intel Mac build of Codex version %s\n\nBuilt from official Codex.dmg\n- Architecture: x86_64 (Intel)\n- Original version: %s\n- Generated automatically via GitHub Actions\n- Build date: %s" "$VERSION" "$PLAIN_VERSION" "$BUILD_DATE")
+          gh release create "$TAG" \
+            --title "Codex Intel ${VERSION}" \
+            --notes "$NOTES" \
+            --draft=false \
+            --prerelease=false
+        fi
+        
+        # Upload the DMG to the release
+        gh release upload "$TAG" CodexAppMacIntel.dmg --clobber
+        
+        echo "Release created/updated: $TAG"
+        echo "Download URL: https://github.com/${{ github.repository }}/releases/download/${TAG}/CodexAppMacIntel.dmg"
