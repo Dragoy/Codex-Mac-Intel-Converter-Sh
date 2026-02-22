@@ -242,12 +242,18 @@ mkdir -p "${CLI_X64_DIR}"
 
 # Get latest release URL for x86_64-apple-darwin
 CODEX_X64_URL="https://github.com/openai/codex/releases/latest/download/codex-x86_64-apple-darwin.tar.gz"
-curl -L -o "${CLI_X64_DIR}/codex.tar.gz" "${CODEX_X64_URL}" || die "Failed to download x64 Codex CLI"
+CODEX_TARBALL="${CLI_X64_DIR}/codex.tar.gz"
+curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+  --connect-timeout 20 --max-time 300 \
+  -o "${CODEX_TARBALL}" "${CODEX_X64_URL}" || die "Failed to download x64 Codex CLI"
 
-# Extract the tarball
-cd "${CLI_X64_DIR}"
-tar -xzf codex.tar.gz || die "Failed to extract x64 Codex CLI"
-cd "${SCRIPT_DIR}"
+# Validate and extract the tarball
+[[ -s "${CODEX_TARBALL}" ]] || die "Downloaded x64 Codex CLI archive is empty"
+if ! tar -tzf "${CODEX_TARBALL}" >/dev/null 2>&1; then
+  file "${CODEX_TARBALL}" || true
+  die "Downloaded x64 Codex CLI archive is not a valid tar.gz"
+fi
+tar -xzf "${CODEX_TARBALL}" -C "${CLI_X64_DIR}" || die "Failed to extract x64 Codex CLI"
 
 # Find the extracted codex binary (filename is codex-x86_64-apple-darwin)
 CLI_X64_BIN=$(find "${CLI_X64_DIR}" -name "codex*" -type f ! -name "*.tar.gz" | head -1)
